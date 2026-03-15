@@ -1,0 +1,8 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(taskkill /F /IM streamlit.exe)",
+      "Bash(.venv/Scripts/python.exe scripts/init_all_data.py 50)"
+    ]
+  }
+}

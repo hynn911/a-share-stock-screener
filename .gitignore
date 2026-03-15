@@ -1,0 +1,82 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+*.egg
+*.egg-info/
+dist/
+build/
+*.manifest
+*.spec
+
+# Virtual Environment
+.venv/
+venv/
+ENV/
+env/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Local configuration
+.env
+.env.local
+*.local
+settings.local.json
+
+# Database files (SQLite)
+*.db
+*.sqlite
+*.sqlite3
+data/
+
+# Cache and temporary files
+cache/
+*.cache
+temp/
+tmp/
+*.tmp
+*.log
+*.txt
+
+# Jupyter Notebook
+.ipynb_checkpoints
+
+# Testing
+.coverage
+htmlcov/
+.pytest_cache/
+.tox/
+.nox/
+
+# Documentation
+docs/_build/
+
+# OS
+Thumbs.db
+.DS_Store
+
+# Claude Code
+.claude/settings.local.json
+.claude/projects/
+.memory/
+
+# Task outputs
+*.output
+sector_analysis_report.json
+validation_report.json
+work.txt
+
+# Backup files
+*.bak
+*.backup
+incremental_refresh.py
+rebuild_stocks.py
+rebuild_stocks_with_bse.py
+migrate_*.py
