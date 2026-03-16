@@ -52,6 +52,16 @@ python tasks/update_stock_list.py --no-cache
 **缺点**:
 - 需要注册获取 token
 - 免费版有积分限制
+- **15:00 后才开放接口调用**
+
+**积分规则**（[详情](https://tushare.pro/document/1?doc_id=290)）:
+
+| 积分 | 可访问接口 | 频率限制 |
+|------|-----------|---------|
+| 120  | daily 接口（日线行情） | 50 次/分钟，8000 次/天 |
+| 2000+ | stock_basic 等基础接口 | 200 次/分钟 |
+| 5000+ | 特色数据 | 500 次/分钟 |
+| 10000+ | 全部数据 | 无上限 |
 
 **配置步骤**:
 
@@ -66,7 +76,10 @@ python tasks/update_stock_list.py --no-cache
    TUSHARE_TOKEN=your_token_here
    ```
 
-**注意**: 不要将 `.env` 文件提交到 Git！已使用 `.gitignore` 排除。
+**注意**:
+- 不要将 `.env` 文件提交到 Git！已使用 `.gitignore` 排除。
+- **15:00 后才开放接口调用**（北京时间）
+- 120 积分可访问 daily 接口（日线行情）
 
 **使用示例**:
 
@@ -179,8 +192,21 @@ info = stock.info
 ### 最佳实践
 
 1. **本地缓存为主**：日常使用缓存数据，减少 API 调用
-2. **Tushare 为辅**：配置 Tushare token 作为主数据源
+2. **Tushare 为辅**：配置 Tushare token 作为主数据源（15:00 后使用）
 3. **AkShare/东财备用**：当 Tushare 不可用时切换
+
+### Tushare 使用条件
+
+- [x] 已配置 TUSHARE_TOKEN
+- [x] 积分 ≥ 120（可访问 daily 接口）
+- [x] 时间在 15:00 之后（北京时间）
+- [x] 工作日（周一至周五）
+
+**150 积分权限**：
+
+- 可访问：daily 接口（日线行情）
+- 频率限制：50 次/分钟，8000 次/天
+- 使用时间：15:00 后开放调用
 
 ### 配置步骤
 
