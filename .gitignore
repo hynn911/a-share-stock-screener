@@ -29,6 +29,8 @@ env/
 .env.local
 *.local
 settings.local.json
+# Keep .env.example (template)
+!.env.example
 
 # Database files (SQLite)
 *.db

@@ -1,11 +1,29 @@
 """
-数据获取模块 - 基于 AkShare
+数据获取模块 - 基于 AkShare（含备用数据源）
 """
 import akshare as ak
 import pandas as pd
 from datetime import datetime, timedelta
+import time
+import random
+import os
+from dotenv import load_dotenv
 from core.database import SessionLocal
 from core.models import Stock, StockDaily, StockCapitalFlow, StockNews, StockHolderCount
+
+# 加载环境变量（从 .env 文件）
+load_dotenv()
+
+
+# 备用数据源配置
+ALT_DATA_SOURCES = {
+    "tushare": False,  # 需要配置 token
+    "eastmoney_direct": True,  # 东方财富直连
+    "sina": True,  # 新浪财经
+}
+
+# Tushare 配置（从环境变量读取）
+TUSHARE_TOKEN = os.getenv("TUSHARE_TOKEN")  # 从 .env 或系统环境变量读取
 
 
 class DataFetcher:
@@ -13,6 +31,38 @@ class DataFetcher:
 
     def __init__(self):
         self.db = SessionLocal()
+        self.session = self._create_session()
+
+    def _create_session(self):
+        """创建带重试和代理支持的 HTTP Session"""
+        import requests
+        session = requests.Session()
+        session.headers.update({
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+            "Accept": "application/json, text/plain, */*",
+        })
+        return session
+
+    def _retry_request(self, url, max_retries=5, base_delay=2, **kwargs):
+        """带指数退避的 HTTP 请求"""
+        import requests
+
+        for attempt in range(max_retries):
+            try:
+                response = self.session.get(url, timeout=30, **kwargs)
+                response.raise_for_status()
+                return response
+            except (requests.exceptions.ConnectionError,
+                    requests.exceptions.Timeout,
+                    requests.exceptions.RequestException) as e:
+                if attempt < max_retries - 1:
+                    delay = base_delay * (2 ** attempt) + random.uniform(0, 1)
+                    print(f"请求失败 (第{attempt + 1}/{max_retries}次): {e}")
+                    print(f"等待 {delay:.1f} 秒后重试...")
+                    time.sleep(delay)
+                else:
+                    raise
+        return None
 
     def _convert_name(self, raw_name):
         """转换股票名称编码
@@ -23,88 +73,140 @@ class DataFetcher:
         # 直接返回原始名称，AkShare 已经返回正确的 UTF-8 编码
         return raw_name
 
-    def fetch_stock_list(self):
-        """获取 A 股列表（上海、深圳、北京）- 包含行业和概念信息"""
+    def _fetch_stock_list_from_eastmoney(self):
+        """备用方案：直接调用东方财富 API 获取股票列表"""
+        import requests
+
         try:
-            stocks = []
-            api_success = False
+            url = "https://push2.eastmoney.com/api/qt/clist/get"
+            params = {
+                "pn": 1,
+                "pz": 10000,  # 一次性获取所有
+                "po": 1,
+                "np": 1,
+                "fltt": 2,
+                "invt": 2,
+                "fs": "m:0 t:6,m:0 t:80,m:1 t:2,m:1 t:23",  # 沪深 A 股
+                "fields": "f12,f14,f141,f149"  # 代码、名称、行业、概念
+            }
 
-            # 尝试使用 stock_zh_a_spot_em 获取数据（包含行业和概念）
-            try:
-                df_all = ak.stock_zh_a_spot_em()
-                api_success = True
+            resp = self._retry_request(url, params=params)
+            if resp and resp.status_code == 200:
+                data = resp.json()
+                stocks = []
+                for item in data.get("data", {}).get("diff", []):
+                    code = str(item.get("f12", ""))
+                    name = str(item.get("f14", ""))
+                    industry = str(item.get("f141", "")) if item.get("f141") else ""
+                    concept = str(item.get("f149", "")) if item.get("f149") else ""
 
-                for _, row in df_all.iterrows():
-                    code = str(row['代码'])
-                    name = str(row['名称'])
-                    industry = str(row.get('行业', '')) if '行业' in row.keys() else ''
-                    concept = str(row.get('概念板块', '')) if '概念板块' in row.keys() else ''
+                    if not code or code == "NaN":
+                        continue
 
-                    # 确定交易所
-                    if code.startswith('6'):
-                        exchange = "SH"
-                    elif code.startswith('0') or code.startswith('3'):
-                        exchange = "SZ"
-                    elif code.startswith('9') or code.startswith('8') or code.startswith('4'):
-                        exchange = "BJ"
-                    else:
-                        exchange = "SH"
+                    exchange = "SH" if code.startswith("6") else \
+                               "SZ" if code.startswith(("0", "3")) else \
+                               "BJ" if code.startswith(("9", "8", "4")) else "SH"
 
                     stocks.append(Stock(
                         code=code,
                         name=name,
                         exchange=exchange,
-                        industry=industry if industry and industry != 'nan' else None,
-                        concept=concept if concept and concept != 'nan' else None,
+                        industry=industry if industry and industry != "NaN" else None,
+                        concept=concept if concept and concept != "NaN" else None,
                         status="active"
                     ))
-            except Exception as e:
-                print(f"stock_zh_a_spot_em 失败：{e}，使用备用方案...")
+                return stocks
+        except Exception as e:
+            print(f"东方财富直连失败：{e}")
+        return []
 
-            # 备用方案：分别获取各交易所数据（不包含行业信息）
-            if not api_success:
-                for market_func, exchange_code in [
-                    (ak.stock_sh_a_spot_em, "SH"),
-                    (ak.stock_sz_a_spot_em, "SZ"),
-                    (ak.stock_bj_a_spot_em, "BJ")
-                ]:
+    def fetch_stock_list(self):
+        """获取 A 股列表（上海、深圳、北京）- 包含行业和概念信息"""
+        stocks = []
+
+        # 方案 1: AkShare 主接口
+        try:
+            print("尝试 AkShare 主接口...")
+            df_all = ak.stock_zh_a_spot_em()
+
+            for _, row in df_all.iterrows():
+                code = str(row['代码'])
+                name = str(row['名称'])
+                industry = str(row.get('行业', '')) if '行业' in row.keys() else ''
+                concept = str(row.get('概念板块', '')) if '概念板块' in row.keys() else ''
+
+                if not code or code == 'nan':
+                    continue
+
+                exchange = "SH" if code.startswith('6') else \
+                           "SZ" if code.startswith(('0', '3')) else \
+                           "BJ" if code.startswith(('9', '8', '4')) else "SH"
+
+                stocks.append(Stock(
+                    code=code,
+                    name=name,
+                    exchange=exchange,
+                    industry=industry if industry and industry != 'nan' else None,
+                    concept=concept if concept and concept != 'nan' else None,
+                    status="active"
+                ))
+            print(f"AkShare 成功获取 {len(stocks)} 只股票")
+
+        except Exception as e:
+            print(f"AkShare 失败：{e}，切换到备用数据源...")
+
+            # 方案 2: 东方财富直连
+            stocks = self._fetch_stock_list_from_eastmoney()
+            if stocks:
+                print(f"东方财富直连成功获取 {len(stocks)} 只股票")
+            else:
+                # 方案 3: 尝试 Tushare（如果配置了 token）
+                if TUSHARE_TOKEN:
                     try:
-                        df = market_func()
+                        import tushare as ts
+                        ts.set_token(TUSHARE_TOKEN)
+                        pro = ts.pro_api()
+                        df = pro.stock_basic(exchange='', list_status='L', fields='ts_code,symbol,name,industry,list_date')
+
                         for _, row in df.iterrows():
-                            code = str(row.iloc[1])
-                            name = self._convert_name(str(row.iloc[2]))
+                            code = str(row['symbol'])
+                            name = str(row['name'])
+                            industry = str(row.get('industry', ''))
+
+                            exchange = "SH" if code.startswith('6') else \
+                                       "SZ" if code.startswith(('0', '3')) else "SH"
+
                             stocks.append(Stock(
                                 code=code,
                                 name=name,
-                                exchange=exchange_code,
-                                industry=None,
+                                exchange=exchange,
+                                industry=industry if industry and industry != 'None' else None,
                                 concept=None,
                                 status="active"
                             ))
-                    except Exception:
-                        pass
+                        print(f"Tushare 成功获取 {len(stocks)} 只股票")
+                    except Exception as te:
+                        print(f"Tushare 失败：{te}")
 
-            # 批量插入或更新
-            for stock in stocks:
-                existing = self.db.query(Stock).filter(Stock.code == stock.code).first()
-                if existing:
-                    # 更新现有记录
-                    existing.name = stock.name
-                    existing.exchange = stock.exchange
-                    if stock.industry:
-                        existing.industry = stock.industry
-                    if stock.concept:
-                        existing.concept = stock.concept
-                else:
-                    # 新增记录
-                    self.db.add(stock)
-
-            self.db.commit()
-            return len(stocks)
-        except Exception as e:
-            self.db.rollback()
-            print(f"获取股票列表失败：{e}")
+        if not stocks:
+            print("所有数据源均失败")
             return 0
+
+        # 批量插入或更新
+        for stock in stocks:
+            existing = self.db.query(Stock).filter(Stock.code == stock.code).first()
+            if existing:
+                existing.name = stock.name
+                existing.exchange = stock.exchange
+                if stock.industry:
+                    existing.industry = stock.industry
+                if stock.concept:
+                    existing.concept = stock.concept
+            else:
+                self.db.add(stock)
+
+        self.db.commit()
+        return len(stocks)
 
     def fetch_daily_bars(self, stock_code: str, start_date: str = None):
         """获取日线数据"""
