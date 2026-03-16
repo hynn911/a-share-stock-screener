@@ -15,15 +15,30 @@ from core.models import Stock, StockDaily, StockCapitalFlow, StockNews, StockHol
 load_dotenv()
 
 
-# 备用数据源配置
-ALT_DATA_SOURCES = {
-    "tushare": False,  # 需要配置 token
-    "eastmoney_direct": True,  # 东方财富直连
-    "sina": True,  # 新浪财经
-}
-
 # Tushare 配置（从环境变量读取）
 TUSHARE_TOKEN = os.getenv("TUSHARE_TOKEN")  # 从 .env 或系统环境变量读取
+
+
+def is_tushare_available():
+    """
+    检查 Tushare 是否可用
+    Tushare 在交易日 15:00 后开放接口调用
+    """
+    if not TUSHARE_TOKEN:
+        return False
+
+    now = datetime.now()
+    # 检查是否在 15:00 之后
+    if now.hour < 15:
+        print(f"当前时间 {now.hour}:00，Tushare 在 15:00 后才开放，暂不使用")
+        return False
+
+    # 检查是否是交易日（周一至周五）
+    if now.weekday() >= 5:  # 周六=5, 周日=6
+        print(f"周末，Tushare 可能限制访问，优先使用其他数据源")
+        return False
+
+    return True
 
 
 class DataFetcher:
@@ -160,9 +175,10 @@ class DataFetcher:
             if stocks:
                 print(f"东方财富直连成功获取 {len(stocks)} 只股票")
             else:
-                # 方案 3: 尝试 Tushare（如果配置了 token）
-                if TUSHARE_TOKEN:
+                # 方案 3: 尝试 Tushare（如果配置了 token 且时间在 15:00 后）
+                if is_tushare_available():
                     try:
+                        print("尝试 Tushare 数据源...")
                         import tushare as ts
                         ts.set_token(TUSHARE_TOKEN)
                         pro = ts.pro_api()
@@ -187,6 +203,8 @@ class DataFetcher:
                         print(f"Tushare 成功获取 {len(stocks)} 只股票")
                     except Exception as te:
                         print(f"Tushare 失败：{te}")
+                else:
+                    print("Tushare 不可用（未配置 token 或时间不在 15:00 后）")
 
         if not stocks:
             print("所有数据源均失败")
@@ -210,6 +228,42 @@ class DataFetcher:
 
     def fetch_daily_bars(self, stock_code: str, start_date: str = None):
         """获取日线数据"""
+        # 尝试使用 Tushare（15:00 后且有 token）
+        if is_tushare_available():
+            try:
+                print(f"  使用 Tushare 获取 {stock_code} 日线数据...")
+                import tushare as ts
+                ts.set_token(TUSHARE_TOKEN)
+                pro = ts.pro_api()
+
+                if not start_date:
+                    start_date = "20200101"
+
+                # Tushare daily 接口（120 积分即可）
+                df = pro.daily(ts_code=stock_code, start_date=start_date)
+
+                if df is not None and len(df) > 0:
+                    records = []
+                    for _, row in df.iterrows():
+                        records.append(StockDaily(
+                            stock_code=stock_code,
+                            trade_date=pd.to_datetime(str(row['trade_date'])).date(),
+                            open=float(row['open']),
+                            high=float(row['high']),
+                            low=float(row['low']),
+                            close=float(row['close']),
+                            volume=int(row['vol']),
+                            amount=float(row['amount']),
+                            turnover_rate=float(row.get('turnover_rate', 0))
+                        ))
+
+                    self.db.add_all(records)
+                    self.db.commit()
+                    return len(records)
+            except Exception as e:
+                print(f"  Tushare 获取失败：{e}，切换到 AkShare...")
+
+        # 默认使用 AkShare
         try:
             if not start_date:
                 start_date = "20200101"
