@@ -2,10 +2,15 @@
 大宗商品价格刷新脚本
 """
 import argparse
+import os
 import sys
 import pandas as pd
 from datetime import datetime
-sys.path.insert(0, '..')
+
+# 添加项目根目录到 Python 路径
+script_dir = os.path.dirname(os.path.abspath(__file__))
+project_root = os.path.dirname(script_dir)
+sys.path.insert(0, project_root)
 
 # 设置控制台 UTF-8 编码输出
 if sys.platform == 'win32':
