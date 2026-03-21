@@ -66,6 +66,19 @@ streamlit run ui/app.py
 
 建议使用 `scripts/clean_and_restart.sh` 或 `scripts/clean_and_restart.bat` 一键完成清理和重启。
 
+## Git 分支管理
+
+### test 分支开发规范
+
+- **test 分支**：日常开发分支，本地修改后暂不提交
+- 等待通知后再统一提交到 Git
+- 避免频繁提交，保持本地迭代开发
+
+工作流程：
+1. 在 test 分支上开发
+2. 本地测试验证
+3. 等待通知后再 `git commit` 和 `git push`
+
 ## 项目结构
 
 ```
